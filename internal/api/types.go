@@ -49,6 +49,17 @@ type Log struct {
 	RequestID   string    `json:"requestId,omitempty"`
 }
 
+type Organization struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type Project struct {
+	ID             string `json:"id"`
+	DisplayName    string `json:"displayName"`
+	OrganizationID string `json:"organizationId"`
+}
+
 type APIError struct {
 	StatusCode int    `json:"statusCode"`
 	Error      string `json:"error"`

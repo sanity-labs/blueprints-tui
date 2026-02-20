@@ -11,6 +11,7 @@ import (
 )
 
 type Client struct {
+	apiURL    string
 	baseURL   string
 	token     string
 	scopeType string
@@ -27,6 +28,7 @@ func (c *Client) Debugf(format string, args ...interface{}) {
 
 func NewClient(apiURL, token, scopeType, scopeID string, debug bool) *Client {
 	c := &Client{
+		apiURL:    apiURL,
 		baseURL:   apiURL + "/vX/blueprints",
 		token:     token,
 		scopeType: scopeType,
@@ -40,6 +42,27 @@ func NewClient(apiURL, token, scopeType, scopeID string, debug bool) *Client {
 		}
 	}
 	return c
+}
+
+func (c *Client) SetScope(scopeType, scopeID string) {
+	c.scopeType = scopeType
+	c.scopeID = scopeID
+}
+
+func (c *Client) ListOrganizations() ([]Organization, error) {
+	var orgs []Organization
+	if err := c.getManagement("/v2021-06-07/organizations", &orgs); err != nil {
+		return nil, err
+	}
+	return orgs, nil
+}
+
+func (c *Client) ListProjects() ([]Project, error) {
+	var projects []Project
+	if err := c.getManagement("/v2021-06-07/projects", &projects); err != nil {
+		return nil, err
+	}
+	return projects, nil
 }
 
 func (c *Client) ListStacks() ([]Stack, error) {
@@ -163,6 +186,48 @@ func (c *Client) get(path string, params url.Values, out any) error {
 	if c.debugLog != nil {
 		c.debugLog.Printf("Response: %d (%d bytes)", resp.StatusCode, len(body))
 		c.debugLog.Printf("Body: %s", string(body))
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		var apiErr APIError
+		if json.Unmarshal(body, &apiErr) == nil && apiErr.Message != "" {
+			return fmt.Errorf("API error %d: %s", resp.StatusCode, apiErr.Message)
+		}
+		return fmt.Errorf("API error %d: %s", resp.StatusCode, string(body))
+	}
+
+	if err := json.Unmarshal(body, out); err != nil {
+		return fmt.Errorf("decoding response: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) getManagement(path string, out any) error {
+	u := c.apiURL + path
+
+	req, err := http.NewRequest("GET", u, nil)
+	if err != nil {
+		return fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	if c.debugLog != nil {
+		c.debugLog.Printf("%s %s", req.Method, req.URL)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("reading response: %w", err)
+	}
+
+	if c.debugLog != nil {
+		c.debugLog.Printf("Response: %d (%d bytes)", resp.StatusCode, len(body))
 	}
 
 	if resp.StatusCode != http.StatusOK {

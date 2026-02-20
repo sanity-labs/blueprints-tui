@@ -19,13 +19,16 @@ type sanityConfig struct {
 	AuthToken string `json:"authToken"`
 }
 
-func Load(flagToken, flagProject, flagAPIURL string, staging bool) (Config, error) {
+func Load(flagToken, flagOrg, flagProject, flagAPIURL string, staging bool) (Config, error) {
 	cfg := Config{
-		ScopeType: "project",
-		APIURL:    "https://api.sanity.io",
+		APIURL: "https://api.sanity.io",
 	}
 	if staging {
 		cfg.APIURL = "https://api.sanity.work"
+	}
+
+	if flagOrg != "" && flagProject != "" {
+		return cfg, fmt.Errorf("--org and --project are mutually exclusive")
 	}
 
 	cfg.Token = resolve(flagToken, "SANITY_AUTH_TOKEN", "")
@@ -39,9 +42,26 @@ func Load(flagToken, flagProject, flagAPIURL string, staging bool) (Config, erro
 		return cfg, fmt.Errorf("no auth token found (use --token, SANITY_AUTH_TOKEN, or log in with the Sanity CLI)")
 	}
 
-	cfg.ScopeID = resolve(flagProject, "SANITY_PROJECT_ID", "")
-	if cfg.ScopeID == "" {
-		return cfg, fmt.Errorf("no project ID provided (use --project or SANITY_PROJECT_ID)")
+	switch {
+	case flagOrg != "":
+		cfg.ScopeType = "organization"
+		cfg.ScopeID = flagOrg
+	case flagProject != "":
+		cfg.ScopeType = "project"
+		cfg.ScopeID = flagProject
+	default:
+		orgID := os.Getenv("SANITY_ORG_ID")
+		projectID := os.Getenv("SANITY_PROJECT_ID")
+		if orgID != "" && projectID != "" {
+			return cfg, fmt.Errorf("SANITY_ORG_ID and SANITY_PROJECT_ID are mutually exclusive")
+		}
+		if orgID != "" {
+			cfg.ScopeType = "organization"
+			cfg.ScopeID = orgID
+		} else if projectID != "" {
+			cfg.ScopeType = "project"
+			cfg.ScopeID = projectID
+		}
 	}
 
 	if u := resolve(flagAPIURL, "BLUEPRINTS_API_URL", ""); u != "" {

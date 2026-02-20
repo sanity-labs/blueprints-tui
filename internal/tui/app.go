@@ -11,7 +11,8 @@ import (
 type view int
 
 const (
-	viewStackList view = iota
+	viewScopePicker view = iota
+	viewStackList
 	viewStackDetail
 	viewResourceDetail
 	viewOperationDetail
@@ -20,6 +21,9 @@ const (
 type Model struct {
 	client          *api.Client
 	currentView     view
+	scopePicker     scopePickerModel
+	scopeLabel      string
+	scopeType       string
 	stackList       stackListModel
 	stackDetail     stackDetailModel
 	resourceDetail  resourceDetailModel
@@ -30,17 +34,28 @@ type Model struct {
 	height          int
 }
 
-func NewModel(client *api.Client) Model {
-	return Model{
-		client:      client,
-		currentView: viewStackList,
-		stackList:   newStackListModel(client),
-		help:        help.New(),
+func NewModel(client *api.Client, hasScope bool) Model {
+	m := Model{
+		client: client,
+		help:   help.New(),
 	}
+	if hasScope {
+		m.currentView = viewStackList
+		m.stackList = newStackListModel(client)
+	} else {
+		m.currentView = viewScopePicker
+		m.scopePicker = newScopePickerModel(client)
+	}
+	return m
 }
 
 func (m Model) Init() tea.Cmd {
-	return m.stackList.Init()
+	switch m.currentView {
+	case viewScopePicker:
+		return m.scopePicker.Init()
+	default:
+		return m.stackList.Init()
+	}
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -49,6 +64,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.help.SetWidth(msg.Width)
+
+	case scopeSelectedMsg:
+		m.scopeLabel = msg.label
+		m.scopeType = msg.scopeType
+		m.client.SetScope(msg.scopeType, msg.scopeID)
+		m.stackList = newStackListModel(m.client)
+		m.stackList.list.Title = "Stacks — " + msg.label
+		m.stackList.width = m.width
+		m.stackList.height = m.height
+		m.stackList.list.SetSize(m.width, m.height-stackListChrome)
+		m.currentView = viewStackList
+		return m, m.stackList.Init()
 
 	case tea.KeyPressMsg:
 		if key.Matches(msg, appKeys.Quit) && !m.isFiltering() {
@@ -69,6 +96,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) View() tea.View {
 	var content string
 	switch m.currentView {
+	case viewScopePicker:
+		content = m.scopePicker.View()
 	case viewStackList:
 		content = m.stackList.View()
 	case viewStackDetail:
@@ -90,7 +119,7 @@ func (m Model) View() tea.View {
 
 func (m Model) breadcrumb() string {
 	sep := mutedStyle.Render(" › ")
-	crumbs := mutedStyle.Render("Stacks")
+	crumbs := titleStyle.Render(m.scopeLabel) + sep + mutedStyle.Render("Stacks")
 
 	switch m.currentView {
 	case viewStackDetail:
@@ -111,9 +140,24 @@ func (m Model) breadcrumb() string {
 
 func (m Model) handleNavigation(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	switch m.currentView {
+	case viewScopePicker:
+		if m.scopePicker.list.FilterState() == list.Filtering {
+			break
+		}
+		if key.Matches(msg, appKeys.Select) {
+			if scope, ok := m.scopePicker.selectedScope(); ok {
+				return m, func() tea.Msg { return scope }, true
+			}
+		}
+
 	case viewStackList:
 		if m.isFiltering() {
 			break
+		}
+		if key.Matches(msg, appKeys.Back) && m.scopePicker.client != nil {
+			m.scopePicker.list.SetSize(m.width, m.height-scopePickerChrome)
+			m.currentView = viewScopePicker
+			return m, nil, true
 		}
 		if key.Matches(msg, appKeys.Select) {
 			if stack, ok := m.stackList.selectedStack(); ok {
@@ -167,6 +211,8 @@ func (m Model) handleNavigation(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 func (m Model) updateCurrentView(msg tea.Msg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch m.currentView {
+	case viewScopePicker:
+		m.scopePicker, cmd = m.scopePicker.Update(msg)
 	case viewStackList:
 		m.stackList, cmd = m.stackList.Update(msg)
 	case viewStackDetail:
@@ -180,5 +226,11 @@ func (m Model) updateCurrentView(msg tea.Msg) (Model, tea.Cmd) {
 }
 
 func (m Model) isFiltering() bool {
-	return m.currentView == viewStackList && m.stackList.list.FilterState() == list.Filtering
+	switch m.currentView {
+	case viewScopePicker:
+		return m.scopePicker.list.FilterState() == list.Filtering
+	case viewStackList:
+		return m.stackList.list.FilterState() == list.Filtering
+	}
+	return false
 }
