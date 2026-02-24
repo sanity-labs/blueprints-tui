@@ -4,13 +4,13 @@ import (
 	"fmt"
 	"strings"
 
-	tea "charm.land/bubbletea/v2"
-	"charm.land/bubbles/v2/spinner"
-	"charm.land/bubbles/v2/viewport"
-	"github.com/sanity-io/blueprints-tui/internal/api"
+	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/sanity-labs/blueprints-tui/internal/api"
 )
 
-const operationChrome = 7 // breadcrumb + timestamps + header + spacing
+const operationHeaderChrome = 4 // timestamp + blank line + "Logs" header with bottom border
 
 type operationLogsLoadedMsg struct {
 	logs []api.Log
@@ -25,13 +25,11 @@ type operationDetailModel struct {
 	spinner     spinner.Model
 	loadingLogs bool
 	err         error
-	width       int
-	height      int
 }
 
 func newOperationDetailModel(client *api.Client, stackID string, op api.Operation, width, height int) operationDetailModel {
 	sp := spinner.New(spinner.WithSpinner(spinner.Dot))
-	vp := viewport.New(viewport.WithWidth(width), viewport.WithHeight(height-operationChrome))
+	vp := viewport.New(width, height-operationHeaderChrome)
 
 	return operationDetailModel{
 		operation:   op,
@@ -39,10 +37,13 @@ func newOperationDetailModel(client *api.Client, stackID string, op api.Operatio
 		stackID:     stackID,
 		viewport:    vp,
 		spinner:     sp,
-		width:       width,
-		height:      height,
 		loadingLogs: true,
 	}
+}
+
+func (m *operationDetailModel) SetSize(w, h int) {
+	m.viewport.Width = w
+	m.viewport.Height = h - operationHeaderChrome
 }
 
 func (m operationDetailModel) Init() tea.Cmd {
@@ -51,12 +52,6 @@ func (m operationDetailModel) Init() tea.Cmd {
 
 func (m operationDetailModel) Update(msg tea.Msg) (operationDetailModel, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		m.viewport.SetWidth(msg.Width)
-		m.viewport.SetHeight(msg.Height - operationChrome)
-
 	case operationLogsLoadedMsg:
 		m.loadingLogs = false
 		m.logs = msg.logs
@@ -109,7 +104,6 @@ func (m operationDetailModel) fetchLogs() tea.Cmd {
 	return func() tea.Msg {
 		logs, err := m.client.ListLogs(api.ListLogsOpts{
 			OperationID: m.operation.ID,
-		
 		})
 		if err != nil {
 			return apiErrMsg{err: err}

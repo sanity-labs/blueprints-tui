@@ -39,3 +39,21 @@ When no scope flag is provided, an interactive picker lists your organizations a
 | `/` | Filter list |
 | `r` | Refresh |
 | `q` | Quit |
+
+## Installation
+
+### Go install
+
+```
+go install github.com/sanity-labs/blueprints-tui@latest
+```
+
+### Binary release
+
+Download the binary for your platform from the [releases page](https://github.com/sanity-labs/blueprints-tui/releases).
+
+macOS users will want to remove the quarantine attribute from the binary:
+
+```
+xattr -d com.apple.quarantine blueprints-tui
+```

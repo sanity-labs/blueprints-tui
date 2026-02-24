@@ -3,28 +3,25 @@ package tui
 import (
 	"fmt"
 
-	tea "charm.land/bubbletea/v2"
-	"charm.land/bubbles/v2/list"
-	"charm.land/bubbles/v2/spinner"
-	"github.com/sanity-io/blueprints-tui/internal/api"
+	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/spinner"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/sanity-labs/blueprints-tui/internal/api"
 )
-
-const stackListChrome = 1 // status bar
 
 type stackItem struct {
 	stack api.Stack
 }
 
-func (i stackItem) Title() string       { return i.stack.Name }
-func (i stackItem) Description() string { return fmt.Sprintf("%s  •  %s", i.stack.ID, i.stack.BlueprintID) }
+func (i stackItem) Title() string { return i.stack.Name }
+func (i stackItem) Description() string {
+	return fmt.Sprintf("%s  •  %s", i.stack.ID, i.stack.BlueprintID)
+}
 func (i stackItem) FilterValue() string { return i.stack.Name }
 
 type stacksLoadedMsg struct {
 	stacks []api.Stack
-}
-
-type apiErrMsg struct {
-	err error
 }
 
 type stackListModel struct {
@@ -33,17 +30,17 @@ type stackListModel struct {
 	loading bool
 	spinner spinner.Model
 	err     error
-	width   int
-	height  int
 }
 
 func newStackListModel(client *api.Client) stackListModel {
 	delegate := list.NewDefaultDelegate()
 	l := list.New(nil, delegate, 0, 0)
-	l.Title = "Blueprints Stacks"
+	l.SetShowTitle(false)
 	l.SetShowStatusBar(true)
 	l.SetFilteringEnabled(true)
-	l.Styles.Title = titleStyle
+	l.SetShowHelp(false)
+	l.SetShowPagination(false)
+	l.Styles.TitleBar = lipgloss.NewStyle()
 
 	sp := spinner.New(spinner.WithSpinner(spinner.Dot))
 
@@ -61,11 +58,6 @@ func (m stackListModel) Init() tea.Cmd {
 
 func (m stackListModel) Update(msg tea.Msg) (stackListModel, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		m.list.SetSize(msg.Width, msg.Height-stackListChrome)
-
 	case stacksLoadedMsg:
 		m.loading = false
 		items := make([]list.Item, len(msg.stacks))
@@ -106,6 +98,10 @@ func (m stackListModel) View() string {
 	return m.list.View()
 }
 
+func (m *stackListModel) SetSize(w, h int) {
+	m.list.SetSize(w, h)
+}
+
 func (m stackListModel) selectedStack() (api.Stack, bool) {
 	item := m.list.SelectedItem()
 	if item == nil {
@@ -118,10 +114,9 @@ func (m stackListModel) selectedStack() (api.Stack, bool) {
 	return si.stack, true
 }
 
-
-func (m *stackListModel) Refresh() tea.Cmd {
+func (m stackListModel) Refresh() (stackListModel, tea.Cmd) {
 	m.loading = true
-	return tea.Batch(m.spinner.Tick, m.fetchStacks())
+	return m, tea.Batch(m.spinner.Tick, m.fetchStacks())
 }
 
 func (m stackListModel) fetchStacks() tea.Cmd {

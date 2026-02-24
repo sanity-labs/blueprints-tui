@@ -5,30 +5,31 @@ import (
 	"fmt"
 	"strings"
 
-	tea "charm.land/bubbletea/v2"
-	"charm.land/bubbles/v2/viewport"
-	"github.com/sanity-io/blueprints-tui/internal/api"
+	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/sanity-labs/blueprints-tui/internal/api"
 )
 
-const resourceChrome = 5 // breadcrumb + type line + spacing
+const resourceHeaderChrome = 2 // type line + blank line
 
 type resourceDetailModel struct {
 	resource api.Resource
 	viewport viewport.Model
-	width    int
-	height   int
 }
 
 func newResourceDetailModel(r api.Resource, width, height int) resourceDetailModel {
-	vp := viewport.New(viewport.WithWidth(width), viewport.WithHeight(height-resourceChrome))
+	vp := viewport.New(width, height-resourceHeaderChrome)
 	vp.SetContent(formatResource(r))
 
 	return resourceDetailModel{
 		resource: r,
 		viewport: vp,
-		width:    width,
-		height:   height,
 	}
+}
+
+func (m *resourceDetailModel) SetSize(w, h int) {
+	m.viewport.Width = w
+	m.viewport.Height = h - resourceHeaderChrome
 }
 
 func (m resourceDetailModel) Init() tea.Cmd {
@@ -36,14 +37,6 @@ func (m resourceDetailModel) Init() tea.Cmd {
 }
 
 func (m resourceDetailModel) Update(msg tea.Msg) (resourceDetailModel, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		m.viewport.SetWidth(msg.Width)
-		m.viewport.SetHeight(msg.Height - resourceChrome)
-	}
-
 	var cmd tea.Cmd
 	m.viewport, cmd = m.viewport.Update(msg)
 	return m, cmd

@@ -4,14 +4,13 @@ import (
 	"fmt"
 	"strings"
 
-	tea "charm.land/bubbletea/v2"
-	"charm.land/bubbles/v2/help"
-	"charm.land/bubbles/v2/key"
-	"charm.land/bubbles/v2/spinner"
-	"charm.land/bubbles/v2/table"
-	"charm.land/bubbles/v2/viewport"
-	lipgloss "charm.land/lipgloss/v2"
-	"github.com/sanity-io/blueprints-tui/internal/api"
+	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/table"
+	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/sanity-labs/blueprints-tui/internal/api"
 )
 
 type detailTab int
@@ -35,7 +34,7 @@ func (t detailTab) String() string {
 	return ""
 }
 
-const detailChrome = 8 // breadcrumb + tabs + help bar + spacing
+const detailTabChrome = 2 // tab row + blank line
 
 type resourcesLoadedMsg struct {
 	resources []api.Resource
@@ -61,7 +60,6 @@ type stackDetailModel struct {
 	operationTable table.Model
 	logViewport    viewport.Model
 	spinner        spinner.Model
-	help           help.Model
 
 	loadingResources  bool
 	loadingOperations bool
@@ -73,7 +71,7 @@ type stackDetailModel struct {
 
 func newStackDetailModel(client *api.Client, stack api.Stack, width, height int) stackDetailModel {
 	sp := spinner.New(spinner.WithSpinner(spinner.Dot))
-	contentHeight := height - detailChrome
+	innerH := height - detailTabChrome
 
 	rt := table.New(
 		table.WithColumns([]table.Column{
@@ -83,7 +81,7 @@ func newStackDetailModel(client *api.Client, stack api.Stack, width, height int)
 		}),
 		table.WithFocused(true),
 		table.WithWidth(width),
-		table.WithHeight(contentHeight),
+		table.WithHeight(innerH),
 	)
 
 	ot := table.New(
@@ -93,10 +91,10 @@ func newStackDetailModel(client *api.Client, stack api.Stack, width, height int)
 			{Title: "Created", Width: 20},
 		}),
 		table.WithWidth(width),
-		table.WithHeight(contentHeight),
+		table.WithHeight(innerH),
 	)
 
-	vp := viewport.New(viewport.WithWidth(width), viewport.WithHeight(contentHeight))
+	vp := viewport.New(width, innerH)
 
 	return stackDetailModel{
 		stack:             stack,
@@ -106,7 +104,6 @@ func newStackDetailModel(client *api.Client, stack api.Stack, width, height int)
 		operationTable:    ot,
 		logViewport:       vp,
 		spinner:           sp,
-		help:              help.New(),
 		width:             width,
 		height:            height,
 		loadingResources:  true,
@@ -126,19 +123,7 @@ func (m stackDetailModel) Init() tea.Cmd {
 
 func (m stackDetailModel) Update(msg tea.Msg) (stackDetailModel, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		m.help.SetWidth(msg.Width)
-		contentHeight := msg.Height - detailChrome
-		m.resourceTable.SetWidth(msg.Width)
-		m.resourceTable.SetHeight(contentHeight)
-		m.operationTable.SetWidth(msg.Width)
-		m.operationTable.SetHeight(contentHeight)
-		m.logViewport.SetWidth(msg.Width)
-		m.logViewport.SetHeight(contentHeight)
-
-	case tea.KeyPressMsg:
+	case tea.KeyMsg:
 		switch {
 		case key.Matches(msg, appKeys.Tab):
 			m.activeTab = (m.activeTab + 1) % tabCount
@@ -206,7 +191,7 @@ func (m stackDetailModel) Update(msg tea.Msg) (stackDetailModel, tea.Cmd) {
 func (m stackDetailModel) View() string {
 	var b strings.Builder
 
-	b.WriteString(m.renderTabs() + "\n\n")
+	b.WriteString(m.renderTabs() + "\n")
 
 	if m.err != nil {
 		b.WriteString("Error: " + m.err.Error())
@@ -234,14 +219,6 @@ func (m stackDetailModel) View() string {
 		}
 	}
 
-	helpBar := helpStyle.Render(m.help.View(m))
-	contentHeight := lipgloss.Height(b.String())
-	helpHeight := lipgloss.Height(helpBar)
-	if gap := m.height - contentHeight - helpHeight; gap > 0 {
-		b.WriteString(strings.Repeat("\n", gap))
-	}
-	b.WriteString(helpBar)
-
 	return b.String()
 }
 
@@ -254,19 +231,25 @@ func (m stackDetailModel) renderTabs() string {
 			tabs[i] = tabInactiveStyle.Render(i.String())
 		}
 	}
-	return lipgloss.JoinHorizontal(lipgloss.Top, strings.Join(tabs, "  "))
-}
-
-func (m stackDetailModel) ShortHelp() []key.Binding {
-	bindings := []key.Binding{appKeys.Tab, appKeys.Back, appKeys.Refresh, appKeys.Quit}
-	if m.activeTab == tabResources || m.activeTab == tabOperations {
-		bindings = append([]key.Binding{appKeys.Select}, bindings...)
+	row := lipgloss.JoinHorizontal(lipgloss.Top, strings.Join(tabs, " "))
+	w := m.width
+	if w < 1 {
+		w = lipgloss.Width(row)
 	}
-	return bindings
+	underline := tabUnderlineStyle.Render(strings.Repeat("━", w))
+	return row + "\n" + underline
 }
 
-func (m stackDetailModel) FullHelp() [][]key.Binding {
-	return [][]key.Binding{m.ShortHelp()}
+func (m *stackDetailModel) SetSize(w, h int) {
+	m.width = w
+	m.height = h
+	innerH := h - detailTabChrome
+	m.resourceTable.SetWidth(w)
+	m.resourceTable.SetHeight(innerH)
+	m.operationTable.SetWidth(w)
+	m.operationTable.SetHeight(innerH)
+	m.logViewport.Width = w
+	m.logViewport.Height = innerH
 }
 
 func (m stackDetailModel) updateFocus() stackDetailModel {

@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"sort"
 
-	tea "charm.land/bubbletea/v2"
-	"charm.land/bubbles/v2/list"
-	"charm.land/bubbles/v2/spinner"
-	"github.com/sanity-io/blueprints-tui/internal/api"
+	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/spinner"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/sanity-labs/blueprints-tui/internal/api"
 )
 
 type scopeSelectedMsg struct {
@@ -26,8 +27,10 @@ type orgItem struct {
 	projectCount int
 }
 
-func (i orgItem) Title() string       { return i.org.Name }
-func (i orgItem) Description() string { return fmt.Sprintf("Organization  •  %s  •  %d projects", i.org.ID, i.projectCount) }
+func (i orgItem) Title() string { return i.org.Name }
+func (i orgItem) Description() string {
+	return fmt.Sprintf("Organization  •  %s  •  %d projects", i.org.ID, i.projectCount)
+}
 func (i orgItem) FilterValue() string { return i.org.Name }
 
 type projectItem struct {
@@ -38,25 +41,23 @@ func (i projectItem) Title() string       { return "  ↳ " + i.project.DisplayN
 func (i projectItem) Description() string { return "    Project  •  " + i.project.ID }
 func (i projectItem) FilterValue() string { return i.project.DisplayName }
 
-const scopePickerChrome = 2
-
 type scopePickerModel struct {
 	list    list.Model
 	client  *api.Client
 	loading bool
 	spinner spinner.Model
 	err     error
-	width   int
-	height  int
 }
 
 func newScopePickerModel(client *api.Client) scopePickerModel {
 	delegate := list.NewDefaultDelegate()
 	l := list.New(nil, delegate, 0, 0)
-	l.Title = "Select Scope"
+	l.SetShowTitle(false)
 	l.SetShowStatusBar(true)
 	l.SetFilteringEnabled(true)
-	l.Styles.Title = titleStyle
+	l.SetShowHelp(false)
+	l.SetShowPagination(false)
+	l.Styles.TitleBar = lipgloss.NewStyle()
 
 	sp := spinner.New(spinner.WithSpinner(spinner.Dot))
 
@@ -74,11 +75,6 @@ func (m scopePickerModel) Init() tea.Cmd {
 
 func (m scopePickerModel) Update(msg tea.Msg) (scopePickerModel, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		m.list.SetSize(msg.Width, msg.Height-scopePickerChrome)
-
 	case scopeDataMsg:
 		m.loading = false
 		items := buildScopeItems(msg.orgs, msg.projects)
@@ -114,15 +110,11 @@ func (m scopePickerModel) View() string {
 		return m.spinner.View() + " Loading organizations…"
 	}
 
-	out := m.list.View()
+	return m.list.View()
+}
 
-	if item := m.list.SelectedItem(); item != nil {
-		if _, ok := item.(projectItem); ok {
-			out += "\n" + mutedStyle.Render("  Project scope is being phased out. Consider selecting the organization instead.")
-		}
-	}
-
-	return out
+func (m *scopePickerModel) SetSize(w, h int) {
+	m.list.SetSize(w, h)
 }
 
 func (m scopePickerModel) selectedScope() (scopeSelectedMsg, bool) {

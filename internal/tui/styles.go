@@ -1,11 +1,29 @@
 package tui
 
-import lipgloss "charm.land/lipgloss/v2"
+import "github.com/charmbracelet/lipgloss"
 
 var (
-	accent = lipgloss.Color("#F97316")
+	accent = lipgloss.Color("#3B82F6")
 	muted  = lipgloss.Color("#6B7280")
 	white  = lipgloss.Color("#FAFAFA")
+	dark   = lipgloss.Color("#0F172A")
+
+	headerBoxStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(muted).
+			Padding(0, 1)
+
+	headerTitleStyle = lipgloss.NewStyle().
+				Foreground(dark).
+				Background(accent).
+				Padding(0, 1).
+				Bold(true)
+
+	headerHintStyle = lipgloss.NewStyle().
+				Foreground(muted)
+
+	headerValueStyle = lipgloss.NewStyle().
+				Foreground(white)
 
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
@@ -22,12 +40,23 @@ var (
 			BorderForeground(muted)
 
 	tabActiveStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(accent).
-			Underline(true)
+			Foreground(dark).
+			Background(accent).
+			Padding(0, 1).
+			Bold(true)
 
 	tabInactiveStyle = lipgloss.NewStyle().
-				Foreground(muted)
+				Foreground(muted).
+				Padding(0, 1)
+
+	tabUnderlineStyle = lipgloss.NewStyle().
+				Foreground(accent)
+
+	keycapStyle = lipgloss.NewStyle().
+			Foreground(dark).
+			Background(lipgloss.Color("#E5E7EB")).
+			Padding(0, 1).
+			Bold(true)
 
 	helpStyle = lipgloss.NewStyle().
 			Foreground(muted).
