@@ -1,33 +1,34 @@
 package tui
 
 import (
-	"strings"
-
-	"github.com/charmbracelet/bubbles/help"
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/list"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/list"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/sanity-labs/blueprints-tui/internal/api"
+	"strings"
 )
 
 type apiErrMsg struct {
 	err error
 }
 
-type view int
+type route int
 
 const (
-	viewScopePicker view = iota
-	viewStackList
-	viewStackDetail
-	viewResourceDetail
-	viewOperationDetail
+	routeScopePicker route = iota
+	routeStackList
+	routeStackDetail
+	routeResourceDetail
+	routeOperationDetail
 )
 
 type Model struct {
-	client          *api.Client
-	currentView     view
+	client *api.Client
+	styles styles
+	nav    []route
+
 	scopePicker     scopePickerModel
 	scopeLabel      string
 	scopeType       string
@@ -35,42 +36,59 @@ type Model struct {
 	stackDetail     stackDetailModel
 	resourceDetail  resourceDetailModel
 	operationDetail operationDetailModel
-	help            help.Model
-	showHelp        bool
-	width           int
-	height          int
+
+	help     help.Model
+	showHelp bool
+	width    int
+	height   int
 }
 
 func NewModel(client *api.Client, hasScope bool) Model {
+	s := newStyles(true)
 	m := Model{
 		client: client,
+		styles: s,
 		help:   help.New(),
 	}
 	if hasScope {
-		m.currentView = viewStackList
-		m.stackList = newStackListModel(client)
+		m.nav = []route{routeStackList}
+		m.stackList = newStackListModel(client, s)
 	} else {
-		m.currentView = viewScopePicker
-		m.scopePicker = newScopePickerModel(client)
+		m.nav = []route{routeScopePicker}
+		m.scopePicker = newScopePickerModel(client, s)
 	}
 	return m
 }
 
-func (m Model) Init() tea.Cmd {
-	switch m.currentView {
-	case viewScopePicker:
-		return m.scopePicker.Init()
-	default:
-		return m.stackList.Init()
+func (m Model) currentRoute() route {
+	if len(m.nav) == 0 {
+		return routeScopePicker
 	}
+	return m.nav[len(m.nav)-1]
+}
+
+func (m Model) Init() tea.Cmd {
+	cmds := []tea.Cmd{tea.RequestBackgroundColor}
+	switch m.currentRoute() {
+	case routeScopePicker:
+		cmds = append(cmds, m.scopePicker.Init())
+	default:
+		cmds = append(cmds, m.stackList.Init())
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.BackgroundColorMsg:
+		m.styles = newStyles(msg.IsDark())
+		m.updateChildStyles()
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.help.Width = msg.Width
+		m.help.SetWidth(msg.Width)
 		m.resizeCurrentView()
 		return m, nil
 
@@ -78,17 +96,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.scopeLabel = msg.label
 		m.scopeType = msg.scopeType
 		m.client.SetScope(msg.scopeType, msg.scopeID)
-		m.stackList = newStackListModel(m.client)
+		m.stackList = newStackListModel(m.client, m.styles)
 		m.stackList.SetSize(m.effectiveWidth(), m.contentHeight())
-		m.currentView = viewStackList
+		m.nav = append(m.nav, routeStackList)
 		return m, m.stackList.Init()
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if key.Matches(msg, appKeys.Quit) && !m.isFiltering() {
 			return m, tea.Quit
 		}
 		if key.Matches(msg, appKeys.Help) {
 			m.showHelp = !m.showHelp
+			m.resizeCurrentView()
 			return m, nil
 		}
 		if nav, cmd, handled := m.handleNavigation(msg); handled {
@@ -99,91 +118,99 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m.updateCurrentView(msg)
 }
 
-func (m Model) View() string {
+// View assembles three fixed-size vertical regions:
+//
+//	header (\n\n) content (\n) footer
+//
+// Each sub-view guarantees it renders at exactly contentHeight lines.
+// The footer is the status bar, optionally preceded by expanded help.
+// No gap math, no PlaceVertical at this level.
+func (m Model) View() tea.View {
 	header := m.headerBox()
+	footer := m.footerView()
 
 	var content string
-	switch m.currentView {
-	case viewScopePicker:
+	switch m.currentRoute() {
+	case routeScopePicker:
 		content = m.scopePicker.View()
-	case viewStackList:
+	case routeStackList:
 		content = m.stackList.View()
-	case viewStackDetail:
+	case routeStackDetail:
 		content = m.stackDetail.View()
-	case viewResourceDetail:
+	case routeResourceDetail:
 		content = m.resourceDetail.View()
-	case viewOperationDetail:
+	case routeOperationDetail:
 		content = m.operationDetail.View()
 	}
 
-	top := lipgloss.JoinVertical(lipgloss.Left, header, "", content)
+	v := tea.NewView(header + "\n\n" + content + "\n" + footer)
+	v.AltScreen = true
+	return v
+}
 
-	if m.showHelp {
-		top += "\n" + helpStyle.Render(m.help.View(appKeys))
-	}
-
+// footerView returns the status bar, optionally preceded by expanded help.
+func (m Model) footerView() string {
 	status := m.statusBar()
-	topH := lipgloss.Height(top)
-	statusH := lipgloss.Height(status)
-	gap := m.effectiveHeight() - topH - statusH
-	if gap < 0 {
-		gap = 0
+	if m.showHelp {
+		return m.styles.help.Render(m.help.View(appKeys)) + "\n" + status
 	}
-
-	return top + "\n" + strings.Repeat("\n", gap) + status
+	return status
 }
 
 func (m Model) headerBox() string {
-	title := headerTitleStyle.Render("Blueprints")
-	sep := headerHintStyle.Render("  ▸  ")
-	dot := headerHintStyle.Render("  ·  ")
+	s := m.styles
+	title := s.headerTitle.Render("Blueprints")
+	sep := s.headerHint.Render("  ▸  ")
+	dot := s.headerHint.Render("  ·  ")
 
-	content := title
+	c := title
 
-	switch m.currentView {
-	case viewScopePicker:
-		content += sep + headerHintStyle.Render("Select a scope")
-	case viewStackList:
-		content += sep + headerValueStyle.Render(m.scopeLabel)
-	case viewStackDetail:
-		content += sep + headerValueStyle.Render(m.scopeLabel) +
-			dot + headerValueStyle.Render(m.stackDetail.stack.Name)
-	case viewResourceDetail:
-		content += sep + headerHintStyle.Render(m.scopeLabel) +
-			dot + headerHintStyle.Render(m.stackDetail.stack.Name) +
-			dot + headerValueStyle.Render(m.resourceDetail.resource.Name)
-	case viewOperationDetail:
-		content += sep + headerHintStyle.Render(m.scopeLabel) +
-			dot + headerHintStyle.Render(m.stackDetail.stack.Name) +
-			dot + headerValueStyle.Render(m.operationDetail.operation.ID)
+	switch m.currentRoute() {
+	case routeScopePicker:
+		c += sep + s.headerHint.Render("Select a scope")
+	case routeStackList:
+		c += sep + s.headerValue.Render(m.scopeLabel)
+	case routeStackDetail:
+		c += sep + s.headerValue.Render(m.scopeLabel) +
+			dot + s.headerValue.Render(m.stackDetail.stack.Name)
+	case routeResourceDetail:
+		c += sep + s.headerHint.Render(m.scopeLabel) +
+			dot + s.headerHint.Render(m.stackDetail.stack.Name) +
+			dot + s.headerValue.Render(m.resourceDetail.resource.Name)
+	case routeOperationDetail:
+		c += sep + s.headerHint.Render(m.scopeLabel) +
+			dot + s.headerHint.Render(m.stackDetail.stack.Name) +
+			dot + s.headerValue.Render(m.operationDetail.operation.ID)
 	}
 
-	return headerBoxStyle.Render(content)
+	return s.headerBox.Render(c)
 }
 
-func helpItem(key, label string) string {
-	return keycapStyle.Render(key) + " " + headerHintStyle.Render(label)
+func (m Model) helpItem(k, label string) string {
+	return m.styles.keycap.Render(k) + " " + m.styles.headerHint.Render(label)
 }
 
 func (m Model) statusBar() string {
-	sep := headerHintStyle.Render("  ·  ")
+	sep := m.styles.headerHint.Render("  ·  ")
 	var hints []string
-	switch m.currentView {
-	case viewScopePicker:
-		hints = []string{helpItem("ENTER", "select"), helpItem("/", "filter"), helpItem("?", "help"), helpItem("q", "quit")}
-	case viewStackList:
-		hints = []string{helpItem("ENTER", "select"), helpItem("/", "filter"), helpItem("r", "refresh"), helpItem("ESC", "back"), helpItem("?", "help"), helpItem("q", "quit")}
-	case viewStackDetail:
-		hints = []string{helpItem("ENTER", "select"), helpItem("TAB", "tabs"), helpItem("r", "refresh"), helpItem("ESC", "back"), helpItem("?", "help"), helpItem("q", "quit")}
-	case viewResourceDetail, viewOperationDetail:
-		hints = []string{helpItem("ESC", "back"), helpItem("?", "help"), helpItem("q", "quit")}
+	switch m.currentRoute() {
+	case routeScopePicker:
+		hints = []string{m.helpItem("ENTER", "select"), m.helpItem("/", "filter"), m.helpItem("?", "help"), m.helpItem("q", "quit")}
+	case routeStackList:
+		hints = []string{m.helpItem("ENTER", "select"), m.helpItem("/", "filter"), m.helpItem("r", "refresh"), m.helpItem("ESC", "back"), m.helpItem("?", "help"), m.helpItem("q", "quit")}
+	case routeStackDetail:
+		hints = []string{m.helpItem("ENTER", "select"), m.helpItem("TAB", "tabs"), m.helpItem("r", "refresh"), m.helpItem("ESC", "back"), m.helpItem("?", "help"), m.helpItem("q", "quit")}
+	case routeResourceDetail, routeOperationDetail:
+		hints = []string{m.helpItem("ESC", "back"), m.helpItem("?", "help"), m.helpItem("q", "quit")}
 	}
 	return strings.Join(hints, sep)
 }
 
-func (m Model) handleNavigation(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
-	switch m.currentView {
-	case viewScopePicker:
+func (m Model) handleNavigation(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
+	cur := m.currentRoute()
+
+	switch cur {
+	case routeScopePicker:
 		if m.scopePicker.list.FilterState() == list.Filtering {
 			break
 		}
@@ -193,19 +220,19 @@ func (m Model) handleNavigation(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 			}
 		}
 
-	case viewStackList:
+	case routeStackList:
 		if m.isFiltering() {
 			break
 		}
 		if key.Matches(msg, appKeys.Back) && m.scopePicker.client != nil {
-			m.currentView = viewScopePicker
+			m.nav = m.nav[:len(m.nav)-1]
 			m.resizeCurrentView()
 			return m, nil, true
 		}
 		if key.Matches(msg, appKeys.Select) {
 			if stack, ok := m.stackList.selectedStack(); ok {
-				m.currentView = viewStackDetail
-				m.stackDetail = newStackDetailModel(m.client, stack, m.effectiveWidth(), m.contentHeight())
+				m.stackDetail = newStackDetailModel(m.client, stack, m.styles, m.effectiveWidth(), m.contentHeight())
+				m.nav = append(m.nav, routeStackDetail)
 				return m, m.stackDetail.Init(), true
 			}
 		}
@@ -215,9 +242,9 @@ func (m Model) handleNavigation(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 			return m, cmd, true
 		}
 
-	case viewStackDetail:
+	case routeStackDetail:
 		if key.Matches(msg, appKeys.Back) {
-			m.currentView = viewStackList
+			m.nav = m.nav[:len(m.nav)-1]
 			m.resizeCurrentView()
 			return m, nil, true
 		}
@@ -226,29 +253,29 @@ func (m Model) handleNavigation(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 			switch m.stackDetail.activeTab {
 			case tabResources:
 				if r, ok := m.stackDetail.selectedResource(); ok {
-					m.currentView = viewResourceDetail
-					m.resourceDetail = newResourceDetailModel(r, w, h)
+					m.resourceDetail = newResourceDetailModel(m.client, m.stackDetail.stack.ID, r, m.styles, w, h)
+					m.nav = append(m.nav, routeResourceDetail)
 					return m, m.resourceDetail.Init(), true
 				}
 			case tabOperations:
 				if op, ok := m.stackDetail.selectedOperation(); ok {
-					m.currentView = viewOperationDetail
-					m.operationDetail = newOperationDetailModel(m.client, m.stackDetail.stack.ID, op, w, h)
+					m.operationDetail = newOperationDetailModel(m.client, m.stackDetail.stack.ID, op, m.styles, w, h)
+					m.nav = append(m.nav, routeOperationDetail)
 					return m, m.operationDetail.Init(), true
 				}
 			}
 		}
 
-	case viewResourceDetail:
+	case routeResourceDetail:
 		if key.Matches(msg, appKeys.Back) {
-			m.currentView = viewStackDetail
+			m.nav = m.nav[:len(m.nav)-1]
 			m.resizeCurrentView()
 			return m, nil, true
 		}
 
-	case viewOperationDetail:
+	case routeOperationDetail:
 		if key.Matches(msg, appKeys.Back) {
-			m.currentView = viewStackDetail
+			m.nav = m.nav[:len(m.nav)-1]
 			m.resizeCurrentView()
 			return m, nil, true
 		}
@@ -259,42 +286,51 @@ func (m Model) handleNavigation(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 
 func (m Model) updateCurrentView(msg tea.Msg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
-	switch m.currentView {
-	case viewScopePicker:
+	switch m.currentRoute() {
+	case routeScopePicker:
 		m.scopePicker, cmd = m.scopePicker.Update(msg)
-	case viewStackList:
+	case routeStackList:
 		m.stackList, cmd = m.stackList.Update(msg)
-	case viewStackDetail:
+	case routeStackDetail:
 		m.stackDetail, cmd = m.stackDetail.Update(msg)
-	case viewResourceDetail:
+	case routeResourceDetail:
 		m.resourceDetail, cmd = m.resourceDetail.Update(msg)
-	case viewOperationDetail:
+	case routeOperationDetail:
 		m.operationDetail, cmd = m.operationDetail.Update(msg)
 	}
 	return m, cmd
 }
 
+func (m *Model) updateChildStyles() {
+	s := m.styles
+	m.scopePicker.styles = s
+	m.stackList.styles = s
+	m.stackDetail.styles = s
+	m.resourceDetail.styles = s
+	m.operationDetail.styles = s
+}
+
 func (m *Model) resizeCurrentView() {
 	w, h := m.effectiveWidth(), m.contentHeight()
-	switch m.currentView {
-	case viewScopePicker:
+	switch m.currentRoute() {
+	case routeScopePicker:
 		m.scopePicker.SetSize(w, h)
-	case viewStackList:
+	case routeStackList:
 		m.stackList.SetSize(w, h)
-	case viewStackDetail:
+	case routeStackDetail:
 		m.stackDetail.SetSize(w, h)
-	case viewResourceDetail:
+	case routeResourceDetail:
 		m.resourceDetail.SetSize(w, h)
-	case viewOperationDetail:
+	case routeOperationDetail:
 		m.operationDetail.SetSize(w, h)
 	}
 }
 
 func (m Model) isFiltering() bool {
-	switch m.currentView {
-	case viewScopePicker:
+	switch m.currentRoute() {
+	case routeScopePicker:
 		return m.scopePicker.list.FilterState() == list.Filtering
-	case viewStackList:
+	case routeStackList:
 		return m.stackList.list.FilterState() == list.Filtering
 	}
 	return false
@@ -314,11 +350,13 @@ func (m Model) effectiveHeight() int {
 	return 24
 }
 
+// contentHeight computes the vertical space available for the active sub-view.
+// Layout: header \n\n content \n footer.
+// Total = headerH + 1(blank) + contentH + footerH = effectiveHeight.
 func (m Model) contentHeight() int {
 	headerH := lipgloss.Height(m.headerBox())
-	spacing := 1 // blank line between header and content
-	statusH := 1
-	h := m.effectiveHeight() - headerH - spacing - statusH
+	footerH := lipgloss.Height(m.footerView())
+	h := m.effectiveHeight() - headerH - 1 - footerH
 	if h < 1 {
 		return 1
 	}

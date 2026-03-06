@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/charmbracelet/bubbles/list"
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/sanity-labs/blueprints-tui/internal/api"
 )
 
@@ -37,19 +37,21 @@ type projectItem struct {
 	project api.Project
 }
 
-func (i projectItem) Title() string       { return "  ↳ " + i.project.DisplayName }
+func (i projectItem) Title() string       { return "    " + i.project.DisplayName }
 func (i projectItem) Description() string { return "    Project  •  " + i.project.ID }
 func (i projectItem) FilterValue() string { return i.project.DisplayName }
 
 type scopePickerModel struct {
 	list    list.Model
 	client  *api.Client
+	styles  styles
 	loading bool
 	spinner spinner.Model
 	err     error
+	height  int
 }
 
-func newScopePickerModel(client *api.Client) scopePickerModel {
+func newScopePickerModel(client *api.Client, s styles) scopePickerModel {
 	delegate := list.NewDefaultDelegate()
 	l := list.New(nil, delegate, 0, 0)
 	l.SetShowTitle(false)
@@ -59,11 +61,13 @@ func newScopePickerModel(client *api.Client) scopePickerModel {
 	l.SetShowPagination(false)
 	l.Styles.TitleBar = lipgloss.NewStyle()
 
-	sp := spinner.New(spinner.WithSpinner(spinner.Dot))
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
 
 	return scopePickerModel{
 		list:    l,
 		client:  client,
+		styles:  s,
 		loading: true,
 		spinner: sp,
 	}
@@ -102,18 +106,22 @@ func (m scopePickerModel) Update(msg tea.Msg) (scopePickerModel, tea.Cmd) {
 	return m, nil
 }
 
+// View returns exactly m.height lines. The list bubble renders at its
+// SetSize height; loading/error states are placed in the same box.
 func (m scopePickerModel) View() string {
 	if m.err != nil {
-		return titleStyle.Render("Error") + "\n\n" + m.err.Error()
+		s := m.styles.title.Render("Error") + "\n\n" + m.err.Error()
+		return lipgloss.PlaceVertical(m.height, lipgloss.Top, s)
 	}
 	if m.loading {
-		return m.spinner.View() + " Loading organizations…"
+		s := m.spinner.View() + " Loading organizations…"
+		return lipgloss.PlaceVertical(m.height, lipgloss.Top, s)
 	}
-
 	return m.list.View()
 }
 
 func (m *scopePickerModel) SetSize(w, h int) {
+	m.height = h
 	m.list.SetSize(w, h)
 }
 

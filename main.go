@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/sanity-labs/blueprints-tui/internal/api"
 	"github.com/sanity-labs/blueprints-tui/internal/config"
 	"github.com/sanity-labs/blueprints-tui/internal/tui"
@@ -30,7 +30,7 @@ func main() {
 	client := api.NewClient(cfg.APIURL, cfg.Token, cfg.ScopeType, cfg.ScopeID, cfg.Debug)
 	model := tui.NewModel(client, cfg.ScopeID != "")
 
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	p := tea.NewProgram(model)
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 		os.Exit(1)

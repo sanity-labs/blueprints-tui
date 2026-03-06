@@ -1,15 +1,15 @@
 package tui
 
-import "github.com/charmbracelet/bubbles/key"
+import "charm.land/bubbles/v2/key"
 
 type appKeyMap struct {
-	Quit    key.Binding
-	Back    key.Binding
-	Select  key.Binding
-	Tab     key.Binding
+	Quit     key.Binding
+	Back     key.Binding
+	Select   key.Binding
+	Tab      key.Binding
 	ShiftTab key.Binding
-	Refresh key.Binding
-	Help    key.Binding
+	Refresh  key.Binding
+	Help     key.Binding
 }
 
 var appKeys = appKeyMap{

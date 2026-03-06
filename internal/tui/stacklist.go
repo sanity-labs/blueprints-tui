@@ -2,23 +2,42 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
-	"github.com/charmbracelet/bubbles/list"
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/sanity-labs/blueprints-tui/internal/api"
 )
 
 type stackItem struct {
-	stack api.Stack
+	stack  api.Stack
+	styles *styles
 }
 
 func (i stackItem) Title() string { return i.stack.Name }
 func (i stackItem) Description() string {
-	return fmt.Sprintf("%s  •  %s", i.stack.ID, i.stack.BlueprintID)
+	var parts []string
+	parts = append(parts, i.stack.ID)
+	if count := i.stack.DisplayResourceCount(); count != nil {
+		n := *count
+		if n == 1 {
+			parts = append(parts, "1 resource")
+		} else {
+			parts = append(parts, fmt.Sprintf("%d resources", n))
+		}
+	}
+	parts = append(parts, i.stack.BlueprintID)
+	desc := strings.Join(parts, "  ·  ")
+	if op := i.stack.RecentOperation; op != nil && i.styles != nil {
+		desc = i.styles.statusIndicator(op.Status) + " " + desc
+	}
+	return desc
 }
-func (i stackItem) FilterValue() string { return i.stack.Name }
+func (i stackItem) FilterValue() string {
+	return i.stack.Name + " " + i.stack.ID + " " + i.stack.BlueprintID
+}
 
 type stacksLoadedMsg struct {
 	stacks []api.Stack
@@ -27,12 +46,15 @@ type stacksLoadedMsg struct {
 type stackListModel struct {
 	list    list.Model
 	client  *api.Client
+	styles  styles
+	stacks  []api.Stack
 	loading bool
 	spinner spinner.Model
 	err     error
+	height  int
 }
 
-func newStackListModel(client *api.Client) stackListModel {
+func newStackListModel(client *api.Client, s styles) stackListModel {
 	delegate := list.NewDefaultDelegate()
 	l := list.New(nil, delegate, 0, 0)
 	l.SetShowTitle(false)
@@ -42,11 +64,13 @@ func newStackListModel(client *api.Client) stackListModel {
 	l.SetShowPagination(false)
 	l.Styles.TitleBar = lipgloss.NewStyle()
 
-	sp := spinner.New(spinner.WithSpinner(spinner.Dot))
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
 
 	return stackListModel{
 		list:    l,
 		client:  client,
+		styles:  s,
 		loading: true,
 		spinner: sp,
 	}
@@ -60,9 +84,11 @@ func (m stackListModel) Update(msg tea.Msg) (stackListModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case stacksLoadedMsg:
 		m.loading = false
+		m.err = nil
+		m.stacks = msg.stacks
 		items := make([]list.Item, len(msg.stacks))
 		for i, s := range msg.stacks {
-			items[i] = stackItem{stack: s}
+			items[i] = stackItem{stack: s, styles: &m.styles}
 		}
 		cmd := m.list.SetItems(items)
 		return m, cmd
@@ -88,17 +114,26 @@ func (m stackListModel) Update(msg tea.Msg) (stackListModel, tea.Cmd) {
 	return m, nil
 }
 
+// View returns exactly m.height lines. The list bubble renders at its
+// SetSize height; loading/error states are placed in the same box.
 func (m stackListModel) View() string {
 	if m.err != nil {
-		return titleStyle.Render("Error") + "\n\n" + m.err.Error()
+		s := m.styles.title.Render("Error") + "\n\n" + m.err.Error() + "\n\n" + m.styles.muted.Render("Press r to retry")
+		return lipgloss.PlaceVertical(m.height, lipgloss.Top, s)
 	}
 	if m.loading {
-		return m.spinner.View() + " Loading stacks…"
+		s := m.spinner.View() + " Loading stacks…"
+		return lipgloss.PlaceVertical(m.height, lipgloss.Top, s)
+	}
+	if len(m.list.Items()) == 0 {
+		s := m.styles.muted.Render("No stacks found.")
+		return lipgloss.PlaceVertical(m.height, lipgloss.Top, s)
 	}
 	return m.list.View()
 }
 
 func (m *stackListModel) SetSize(w, h int) {
+	m.height = h
 	m.list.SetSize(w, h)
 }
 
@@ -116,6 +151,7 @@ func (m stackListModel) selectedStack() (api.Stack, bool) {
 
 func (m stackListModel) Refresh() (stackListModel, tea.Cmd) {
 	m.loading = true
+	m.err = nil
 	return m, tea.Batch(m.spinner.Tick, m.fetchStacks())
 }
 
